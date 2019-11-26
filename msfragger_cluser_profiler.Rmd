@@ -1,0 +1,333 @@
+---
+title: "MSfragger with Cluster Profiler compare HeLa and K562 standards"
+output: html_notebook
+fig_width: 4 
+fig_height: 6 
+---
+
+Brett S Phinney, PhD.
+UC Davis Genome Center Proteomics Core
+
+# Warning. This notebook is not  well documented at all. If you want to see some nice notebooks, look here
+
+https://github.com/pwilmart/TMT_analysis_examples
+
+
+
+This is a simple notebook that takes the results from MSFraggers  protein file and does Gene ontology enrichment  using the library ClusterProfiler 
+
+files:
+
+1: is a 100 ng hela digest standard from Pierce analyzed on our timsTOfPro using a 90 minute gradient
+
+
+https://www.thermofisher.com/order/catalog/product/88328#/88328
+
+
+2: is a 100 ng K562 digest standard from Promega analyzed on our timsTOfPro using a 30 minute gradient
+
+https://www.promega.com/products/mass-spectrometry/mass-spec-reference-reagents/mass-spec-compatible-yeast-and-human-protein-extracts/?catNum=V6951
+
+
+These are just 2 random files I pulled to test this . Plus I thought it would be cool to see differences between K562 and HeLa
+
+
+
+
+```{r}
+# load Libraries (install if necessary) 
+
+packages = c("BiocManager","tidyverse","clusterProfiler","org.Hs.eg.db")
+
+package.check <- lapply(packages, FUN = function(x) {
+    if (!require(x, character.only = TRUE)) {
+        install.packages(x, dependencies = TRUE)
+        library(x, character.only = TRUE)
+    }
+})
+
+# BiocManager::install("clusterProfiler") # may need to uncomment this line  if this does not install because of bioconductor install weirdness 
+
+# BiocManager::install("org.Hs.eg.db") # may need to uncomment this line if this does not install because of bioconductor install weirdness 
+
+#verify they are loaded
+search()
+
+
+```
+
+
+```{r}
+# load  msFragger data 
+# this is a 100 ng hela run on teh timstofPRO
+# Change this to the combined protein file if it's a multiexperiment
+
+data <- read_tsv("protein.hela.tsv")
+
+```
+
+Looks like we identified 3912 proteins at a 1% FDR. Not bad for 1 run of 100 ng huh?
+
+
+Let's do some Gene Ontology using clusterprofiler on the HeLa sample!
+
+```{r}
+
+library(org.Hs.eg.db) # this is for human. load a different library from here for a different speccies http://bioconductor.org/packages/release/BiocViews.html#___OrgDb
+
+
+gene <- data$Gene # extract Gene's from MSFragger
+
+# this translates the Gene from MSfragger to something enrichgo can read
+
+gene.df <- bitr(gene, fromType = "SYMBOL", 
+        toType = "ENTREZID",
+        OrgDb = org.Hs.eg.db)
+
+# Make a geneList for some future functions
+
+geneList <- gene.df$ENTREZID
+names(geneList) <- as.character(gene.df$SYMBOL)
+geneList <- sort(geneList, decreasing = TRUE)
+
+
+# gene enrichment analysis cnplots are commented out as they look crazy with a large number of proteins
+
+ego_BP <- enrichGO(gene          = gene.df$ENTREZID,
+                OrgDb         = org.Hs.eg.db,
+                ont           = "BP",
+                pAdjustMethod = "BH",
+                readable = TRUE,
+                pvalueCutoff  = 0.01,
+                qvalueCutoff  = 0.05)
+ego_BP_df <-as.data.frame(ego_BP) 
+
+dotplot(ego_BP, showCategory=15)
+barplot(ego_BP, showCategory=15)
+# cnetplot(ego_BP,categorySize="pvalue")
+
+ego_CC <- enrichGO(gene          = gene.df$ENTREZID,
+                OrgDb         = org.Hs.eg.db,
+                ont           = "CC",
+                pAdjustMethod = "BH",
+                readable = TRUE,
+                pvalueCutoff  = 0.01,
+                qvalueCutoff  = 0.05)
+ego_CC_df <-as.data.frame(ego_CC)
+
+dotplot(ego_CC, showCategory=15)
+barplot(ego_CC, showCategory=15)
+# cnetplot(ego_CC,categorySize="pvalue")
+
+ego_MF <- enrichGO(gene          = gene.df$ENTREZID,
+                OrgDb         = org.Hs.eg.db,
+                ont           = "MF",
+                pAdjustMethod = "BH",
+                readable = TRUE,
+                pvalueCutoff  = 0.01,
+                qvalueCutoff  = 0.05)
+ego_MF_df <-as.data.frame(ego_MF)
+
+dotplot(ego_MF, showCategory=15)
+barplot(ego_MF, showCategory=15)
+# cnetplot(ego_MF,categorySize="pvalue")
+
+
+#Biological Process (BP):  
+#Cellular Component (CC):
+#Molecular Function (MF): 
+
+
+
+# write Go data to csv files
+
+write_csv(ego_BP_df,"go_biological.process.hela.csv")
+write_csv(ego_CC_df,"go_cellular_component.hela.csv")
+write_csv(ego_MF_df,"go_molecular_function.hela.csv")
+
+
+
+
+```
+
+
+Let's look at Kegg over-representation
+
+
+Let's look at Kegg over-representation
+
+```{r}
+human <- search_kegg_organism('Homo sapiens', by='scientific_name') # find keg number for human
+
+kk <- enrichKEGG(gene         = gene.df$ENTREZID,
+                 organism     = 'hsa',
+                 pvalueCutoff = 0.05)
+head(kk)
+
+
+
+# Enrichment map organizes enriched terms into a network with edges connecting overlapping gene sets. In this way, mutually overlapping gene sets are tend to cluster together, making it easy to identify functional module.
+
+emapplot(ego_BP,pie_scale=1.5,layout="kk")
+
+
+```
+
+```{r}
+#WikiPathways
+
+BiocManager::install("rWikiPathways")
+
+library(rWikiPathways)
+
+downloadPathwayArchive(organism="Homo sapiens",format="gmt") #download human wikipathway file
+
+wp2gene <- read.gmt("wikipathways-20191110-gmt-Homo_sapiens.gmt") #read downloaded file
+wp2gene <- wp2gene %>% tidyr::separate(ont, c("name","version","wpid","org"), "%")
+wpid2gene <- wp2gene %>% dplyr::select(wpid, gene) #TERM2GENE
+wpid2name <- wp2gene %>% dplyr::select(wpid, name) #TERM2NAME
+
+ewp <- enricher(geneList, TERM2GENE = wpid2gene, TERM2NAME = wpid2name)
+
+head(ewp)
+
+
+```
+
+
+##Let's do some Gene Ontology using clusterprofiler on the K562  sample!
+
+
+```{r}
+# load  msFragger data 
+# this is a 100 ng K562  run on the  timstofPRO using a 30 minute gradient
+# Change this to the combined protein file if it's a multiexperiment
+
+data <- read_tsv("protein.k562.tsv")
+
+```
+
+Looks like we identified 3294 proteins at a 1% FDR. Not bad for 1 run of 100 ng huh for a 30 minute gradient?
+
+```{r}
+
+library(org.Hs.eg.db) # this is for human. load a different library from here for a different speccies http://bioconductor.org/packages/release/BiocViews.html#___OrgDb
+
+
+gene <- data$Gene # extract Gene's from MSFragger
+
+# this translates the Gene from MSfragger to something enrichgo can read
+
+gene.df <- bitr(gene, fromType = "SYMBOL", 
+        toType = "ENTREZID",
+        OrgDb = org.Hs.eg.db)
+
+# Make a geneList for some future functions
+
+geneList <- gene.df$ENTREZID
+names(geneList) <- as.character(gene.df$SYMBOL)
+geneList <- sort(geneList, decreasing = TRUE)
+
+
+# gene enrichment analysis cnplots are commented out as they look crazy with a large number of proteins
+
+ego_BP <- enrichGO(gene          = gene.df$ENTREZID,
+                OrgDb         = org.Hs.eg.db,
+                ont           = "BP",
+                pAdjustMethod = "BH",
+                readable = TRUE,
+                pvalueCutoff  = 0.01,
+                qvalueCutoff  = 0.05)
+ego_BP_df <-as.data.frame(ego_BP) 
+
+dotplot(ego_BP, showCategory=15)
+barplot(ego_BP, showCategory=15)
+# cnetplot(ego_BP,categorySize="pvalue")
+
+ego_CC <- enrichGO(gene          = gene.df$ENTREZID,
+                OrgDb         = org.Hs.eg.db,
+                ont           = "CC",
+                pAdjustMethod = "BH",
+                readable = TRUE,
+                pvalueCutoff  = 0.01,
+                qvalueCutoff  = 0.05)
+ego_CC_df <-as.data.frame(ego_CC)
+
+dotplot(ego_CC, showCategory=15)
+barplot(ego_CC, showCategory=15)
+# cnetplot(ego_CC,categorySize="pvalue")
+
+ego_MF <- enrichGO(gene          = gene.df$ENTREZID,
+                OrgDb         = org.Hs.eg.db,
+                ont           = "MF",
+                pAdjustMethod = "BH",
+                readable = TRUE,
+                pvalueCutoff  = 0.01,
+                qvalueCutoff  = 0.05)
+ego_MF_df <-as.data.frame(ego_MF)
+
+dotplot(ego_MF, showCategory=15)
+barplot(ego_MF, showCategory=15)
+# cnetplot(ego_MF,categorySize="pvalue")
+
+
+#Biological Process (BP):  
+#Cellular Component (CC):
+#Molecular Function (MF): 
+
+
+
+# write Go data to csv files
+
+write_csv(ego_BP_df,"go_biological.process.k562.csv")
+write_csv(ego_CC_df,"go_cellular_component.k562.csv")
+write_csv(ego_MF_df,"go_molecular_function.k562.csv")
+
+
+
+
+```
+
+
+Let's look at Kegg over-representation
+
+
+
+
+```{r}
+human <- search_kegg_organism('Homo sapiens', by='scientific_name') # find keg number for human
+
+kk <- enrichKEGG(gene         = gene.df$ENTREZID,
+                 organism     = 'hsa',
+                 pvalueCutoff = 0.05)
+head(kk)
+
+
+
+# Enrichment map organizes enriched terms into a network with edges connecting overlapping gene sets. In this way, mutually overlapping gene sets are tend to cluster together, making it easy to identify functional module.
+
+emapplot(ego_BP,pie_scale=1.5,layout="kk")
+
+
+```
+
+```{r}
+#WikiPathways
+
+BiocManager::install("rWikiPathways")
+
+library(rWikiPathways)
+
+downloadPathwayArchive(organism="Homo sapiens",format="gmt") #download human wikipathway file
+
+wp2gene <- read.gmt("wikipathways-20191110-gmt-Homo_sapiens.gmt") #read downloaded file
+wp2gene <- wp2gene %>% tidyr::separate(ont, c("name","version","wpid","org"), "%")
+wpid2gene <- wp2gene %>% dplyr::select(wpid, gene) #TERM2GENE
+wpid2name <- wp2gene %>% dplyr::select(wpid, name) #TERM2NAME
+
+ewp <- enricher(geneList, TERM2GENE = wpid2gene, TERM2NAME = wpid2name)
+
+head(ewp)
+
+
+```
