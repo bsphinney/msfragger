@@ -1,4 +1,4 @@
-# create a subest fasta from Fragpipe/MSFragger results and initial database
+# create a subset fasta from Fragpipe/MSFragger results and initial database
 
 library('tidyverse')
 library("seqinr")
